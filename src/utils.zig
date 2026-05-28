@@ -19,3 +19,9 @@ pub fn getEnumValue(comptime enum_type: type) fn(enum_type) u32 {
 
 pub const PORT0: u32 = 0x50000000;
 pub const PORT1: u32 = 0x50000300;
+
+const PortOutOffset = 0x504;
+pub fn setOutHigh(port: u32, pin: u32) void {
+    const out_reg: *u32 = @ptrFromInt(port + PortOutOffset);
+    out_reg.* |= @as(u32, 1) << @intCast(pin);
+}

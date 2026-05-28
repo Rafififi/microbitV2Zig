@@ -71,6 +71,7 @@ pub const LEDs = struct {
             for (0..5) |j| {
                 if (mat[i][j]) {
                     self.setLED(i, j);
+                    self.off();
                 }
             }
         }

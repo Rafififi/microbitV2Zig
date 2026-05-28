@@ -8,28 +8,47 @@ const UART_OPTIONS = enum(u32) {
     const getValue = utils.getEnumValue(UART_OPTIONS);
 };
 
-const uartEnable = 0x500;
 
-const startRX = 0x000;
-const endRX = 0x004;
+const startRX    = 0x000; // Start UART receiver 
+const stopRX     = 0x004; // Stop UART receiver
+const startTX    = 0x008; // Start UART transmitter
+const stopTX     = 0x00C; // Stop UART transmitter
+const flushRx    = 0x02C; // Flush RX FIFO into RX buffer
+const CTS        = 0x100; // CTS is activated (set low). Clear To Send.
+const NCTS       = 0x104; // CTS is deactivated (set high). Not Clear To Send.
+const RxReady    = 0x108; // Data received in RXD (but potentially not yet transferred to Data RAM)
+const endRx      = 0x110; // Receive buffer is filled up
+const TxReady    = 0x11C; // Data sent from TXD
+const endTx      = 0x120; // Last TX byte transmitted
+const Error      = 0x124; // Error detected
+const RxTo       = 0x144; // Receiver timeout
+const RxStarted  = 0x14C; // UART receiver has started
+const TxStarted  = 0x150; // UART transmitter has started
+const TxStopped  = 0x158; // Transmitter stopped
+const Short      = 0x200; // Shortcuts between local events and tasks
+const Interupts  = 0x300; // Enable or disable interrupt
+const EnableInt  = 0x304; // Enable interrupt
+const DisableInt = 0x308; // Disable interrupt
+const ErrorSrc   = 0x480; // Error source This register is read/write one to clear.
+const Enable     = 0x500; // Enable UART
+const PselRts    = 0x508; // Pin select for RTS signal
+const PselTxd    = 0x50C; // Pin select for TXD signal
+const PselCts    = 0x510; // Pin select for CTS signal
+const PselRxd    = 0x514; // Pin select for RXD signal
+const BaudRate   = 0x524; // Baud rate. Accuracy depends on the HFCLK source selected.
+const RxPtr      = 0x534; // Data pointer
+const RxMaxCnt   = 0x538; // Maximum number of bytes in receive buffer
+const RxAmount   = 0x53C; // Number of bytes transferred in the last transaction
+const TxPtr      = 0x544; // Data pointer
+const TxMaxCnt   = 0x548; // Maximum number of bytes in transmit buffer
+const TxAmount   = 0x54C; // Number of bytes transferred in the last transaction
+const Config     = 0x56C; // Configuration of parity and hardware flow control
 
-const BaudRate = 0x524;
-const startTX = 0x008;
-const stopTX = 0x00C;
-const endTX = 0x120;
-const TxStopped = 0x158;
-const TxdPtr = 0x544;
-const TxdMaxCnt = 0x548;
-const enable = 0x500;
-const config = 0x56C;
-const PselTxd = 0x510;
-const PselRxd = 0x514;
-const AmountTxd = 0x54C;
 
 const UART_TX_PIN: u32 = 6; // P0.06 is MCU TX for USB serial on micro:bit v2.2
 const UART_RX_PIN: u32 = 8; // P0.08 is MCU RX for USB serial on micro:bit v2.2
 
-fn pinCnf(port: u32, pin: u32) *volatile u32 {
+fn pinCnf(port: u32, pin: u32) *u32 {
     const PIN_CNF_BASE: u32 = 0x700;
     return @ptrFromInt(port + PIN_CNF_BASE + pin * 4);
 }
@@ -37,6 +56,13 @@ fn pinCnf(port: u32, pin: u32) *volatile u32 {
 fn psel(port_index: u32, pin: u32) u32 {
     return (pin & 0x1F) | ((port_index & 0x1) << 5);
 }
+
+fn getAndSet(comptime T: type, addr: u32, val: T) T {
+    const ret = @as(*T, @ptrFromInt(addr)).*;
+    @as(*T, @ptrFromInt(addr)).* = val;
+    return ret;
+}
+
 
 pub const BUAD_RATES = enum(u32) {
     Baud1200 = 0x0004F000,
@@ -68,6 +94,7 @@ fn UART(comptime uart: UART_OPTIONS) type {
         baudRateAddr: bitField.BitField(u32),
         configAddr: bitField.BitField(u32),
         startTxAddr: bitField.BitField(u32),
+        startRxAddr: bitField.BitField(u32),
         endTxAddr: bitField.BitField(u32),
         enableUartAddr: bitField.BitField(u32),
         pinSelectAddr: bitField.BitField(u32),
@@ -80,16 +107,19 @@ fn UART(comptime uart: UART_OPTIONS) type {
         pub fn init(baudRate: BUAD_RATES) Self {
             var self = Self{
                 .baudRateAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + BaudRate)),
-                .configAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + config)),
+                .configAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + Config)),
                 .startTxAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + startTX)),
-                .enableUartAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + enable)),
+                .startRxAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + startRX)),
+                .enableUartAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + Enable)),
                 .pinSelectAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + PselTxd)),
                 .pinSelectRxAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + PselRxd)),
-                .endTxAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + endTX)),
+                .endTxAddr = bitField.BitField(u32).init(@ptrFromInt(uart.getValue() + endTx)),
                 .serialTx = bitField.BitField(u32).init(pinCnf(utils.PORT0, UART_TX_PIN)),
-                .serialRx = bitField.BitField(u32).init(pinCnf(utils.PORT0, UART_RX_PIN)),
+                .serialRx = bitField.BitField(u32).init(pinCnf(utils.PORT1, UART_RX_PIN)),
             };
             self.serialTx.clear();
+            // Keep TX idle high to avoid a spurious 0xFF at startup.
+            utils.setOutHigh(utils.PORT0, UART_TX_PIN);
             self.serialTx.onComptime(0);
             self.serialRx.clear();
             self.baudRateAddr.clear();
@@ -103,7 +133,7 @@ fn UART(comptime uart: UART_OPTIONS) type {
             self.baudRateAddr.val.* = baudRate.getValue();
             // Leave CONFIG at 0: HWFC=0, PARITY=0 so TX is not gated by CTS.
             self.pinSelectAddr.setAll(psel(0, UART_TX_PIN));
-            self.pinSelectRxAddr.setAll(psel(0, UART_RX_PIN));
+            self.pinSelectRxAddr.setAll(psel(1, UART_RX_PIN));
             self.enableUartAddr.setAll(8);
             return self;
         }
@@ -111,24 +141,54 @@ fn UART(comptime uart: UART_OPTIONS) type {
             self.endTxAddr.clear();
             self.startTxAddr.onComptime(0);
         }
+        pub fn stopTransmit(self: *Self) void {
+            self.startTxAddr.offComptime(0);
+        }
+        pub fn startReceive(self: *Self) void {
+            self.startRxAddr.onComptime(0);
+        }
         pub fn disableUart(self: *Self) void {
             self.enableUartAddr.clear();
             self.startTxAddr.offComptime(0);
+            self.startRxAddr.offComptime(0);
         }
         pub fn getTxDone(_: *Self) bool {
-            return @as(*volatile u32, @ptrFromInt(uart.getValue() + endTX)).* == 1;
+            return getAndSet(u32, uart.getValue() + endTx, 0) == 1;
         }
         pub fn getTxAmount(_: *Self) u16 {
-            return @as(*u16, @ptrFromInt(uart.getValue() + AmountTxd)).*;
+            return @as(*u16, @ptrFromInt(uart.getValue() + TxAmount)).*;
         }
         pub fn getTXReady(_: *Self) bool {
-            const ret = @as(*volatile u32, @ptrFromInt(uart.getValue() + 0x11C)).* == 1;
-            @as(*volatile u32, @ptrFromInt(uart.getValue() + 0x11C)).* = 0;
-            return ret;
+            return getAndSet(u32, uart.getValue() + 0x11C, 0) == 1;
         }
-        pub fn setDmaPtr(_: *Self, ptr: *const u8, len: u16) void {
-            @as(*volatile u32, @ptrFromInt(uart.getValue() + TxdPtr)).* = @intFromPtr(ptr);
-            @as(*volatile u32, @ptrFromInt(uart.getValue() + TxdMaxCnt)).* = len;
+        pub fn setDmaTx(_: *Self, ptr: *const u8, len: u16) void {
+            @as(*u32, @ptrFromInt(uart.getValue() + TxPtr)).* = @intFromPtr(ptr);
+            @as(*u32, @ptrFromInt(uart.getValue() + TxMaxCnt)).* = len;
+        }
+        pub fn setDmaRx(_: *Self, ptr: *const u8, len: u16) void {
+            @as(*u32, @ptrFromInt(uart.getValue() + RxPtr)).* = @intFromPtr(ptr);
+            @as(*u32, @ptrFromInt(uart.getValue() + RxMaxCnt)).* = len;
+        }
+        pub fn setRxStarted(_: *Self) void {
+            @as(*u32, @ptrFromInt(uart.getValue() + RxAmount)).* = 1;
+        }
+        pub fn getRxStarted(_: *Self) u32 {
+            return getAndSet(u32, uart.getValue() + RxStarted, 0);
+        }
+        pub fn getTxStarted(_: *Self) u32 {
+            return getAndSet(u32, uart.getValue() + TxStarted, 0);
+        }
+        pub fn getRxReady(_: *Self) bool {
+            return getAndSet(u32, uart.getValue() + RxReady, 0) == 1;
+        }
+        pub fn getRxDone(_: *Self) bool {
+            return getAndSet(u32, uart.getValue() + endRx, 0) == 1;
+        }
+        pub fn flushRxBuf(_: *Self) void {
+            @as(*u32, @ptrFromInt(uart.getValue() + flushRx)).* = 1;
+        }
+        pub fn getRxAmount(_: *Self) u16 {
+            return @as(*u16, @ptrFromInt(uart.getValue() + RxAmount)).*;
         }
     };
 }
