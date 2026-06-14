@@ -12,12 +12,12 @@ fn pinCnf(port: u32, pin: u32) *volatile u32 {
 }
 
 pub fn init() LEDs {
-    var led = LEDs{
-        .out_addr = bitfield.BitField(u32).init(@ptrFromInt(OUTADDR)),
-        .out_addr1 = bitfield.BitField(u32).init(@ptrFromInt(PORT1 + OUT_OFFSET)),
+    const led = LEDs{
+        .out_addr = bitfield.BitField(u32).initEmpty(@ptrFromInt(OUTADDR)),
+        .out_addr1 = bitfield.BitField(u32).initEmpty(@ptrFromInt(PORT1 + OUT_OFFSET)),
     };
-    led.out_addr.clear();
-    led.out_addr1.clear();
+    //led.out_addr.clear();
+    //led.out_addr1.clear();
     return led;
 }
 
@@ -61,6 +61,12 @@ pub const LEDs = struct {
 
     pub fn setLEDFlat(self: *LEDs, led: usize) void {
         self.setLED(led / 5, led % 5);
+    }
+    pub fn toggleLED(self: *LEDs) void {
+        if (rowReg(0).* == 1) {
+            self.off();
+        }
+        self.setLEDFlat(0);
     }
 
     // Note: setting multiple LEDs simultaneously still won't work

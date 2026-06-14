@@ -13,8 +13,8 @@ pub fn build(b: *std.Build) void {
 
     const exe = b.addExecutable(.{
         .name = "MICROBIT",
-        .root_module = b.createModule(.{        // <-- changed
-            .root_source_file = b.path("src/main.zig"),
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/startup.zig"),
             .target = target,
             .optimize = optimize,
         }),

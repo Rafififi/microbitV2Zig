@@ -25,3 +25,5 @@ pub fn setOutHigh(port: u32, pin: u32) void {
     const out_reg: *u32 = @ptrFromInt(port + PortOutOffset);
     out_reg.* |= @as(u32, 1) << @intCast(pin);
 }
+
+pub fn dummyHandler() void {}

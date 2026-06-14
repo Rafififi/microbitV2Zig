@@ -5,6 +5,9 @@ pub fn BitField(comptime T: type) type {
         const Self = @This();
         const bit_count = @bitSizeOf(T);
 
+        pub fn initEmpty(addr: *volatile T) Self {
+            return Self {.val = addr };
+        }
         pub fn init(addr: *volatile T) Self {
             addr.* = 0;
             return Self{ .val = addr };
